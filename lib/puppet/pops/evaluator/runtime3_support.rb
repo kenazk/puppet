@@ -136,10 +136,8 @@ module Puppet::Pops::Evaluator::Runtime3Support
   end
 
   def set_scope_nesting_level(scope, level)
-    # Yup, 3x uses this method to reset the level, it also supports passing :all to destroy all 
-    # ephemeral/local scopes - which is a sure way to create havoc.
-    #
-    scope.unset_ephemeral_var(level)
+    # 3x uses this method to reset the level,
+    scope.pop_ephemerals(level)
   end
 
   # Adds a relationship between the given `source` and `target` of the given `relationship_type`
@@ -248,7 +246,9 @@ module Puppet::Pops::Evaluator::Runtime3Support
     # this is done from the perspective of the environment.
     loader = loaders.private_environment_loader
     if loader && func = loader.load(:function, name)
-      return func.call(scope, *args, &block)
+      Puppet::Util::Profiler.profile(name, [:functions, name]) do
+        return func.call(scope, *args, &block)
+      end
     end
 
     # Call via 3x API if function exists there
@@ -267,11 +267,17 @@ module Puppet::Pops::Evaluator::Runtime3Support
     loaders = scope.compiler.loaders
     # find the loader that loaded the code, or use the private_environment_loader (sees env + all modules)
     adapter = Puppet::Pops::Utils.find_adapter(o, Puppet::Pops::Adapters::LoaderAdapter)
+
+    # Use source location to determine calling module, or use the private_environment_loader (sees env + all modules)
+    # This is necessary since not all .pp files are loaded by a Puppet::Pops::Loader (see PUP-1833)
+    adapter ||= Puppet::Pops::Adapters::LoaderAdapter.adapt_by_source(scope, o)
+
     loader = adapter.nil? ? loaders.private_environment_loader : adapter.loader
     if loader && func = loader.load(:function, name)
-      return func.call(scope, *args, &block)
+      Puppet::Util::Profiler.profile(name, [:functions, name]) do
+        return func.call(scope, *args, &block)
+      end
     end
-
     # Call via 3x API if function exists there
     fail(Puppet::Pops::Issues::UNKNOWN_FUNCTION, o, {:name => name}) unless Puppet::Parser::Functions.function(name)
 

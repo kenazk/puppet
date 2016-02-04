@@ -107,6 +107,46 @@ describe "validating 4x" do
         SOURCE
         expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::IDEM_NOT_ALLOWED_LAST)
       end
+
+      it "detects a resource declared without title in #{type} when it is the only declaration present" do
+        source = <<-SOURCE
+          #{type} nope {
+            notify { message => 'Nope' }
+          }
+        SOURCE
+        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::RESOURCE_WITHOUT_TITLE)
+      end
+
+      it "detects a resource declared without title in #{type} when it is in between other declarations" do
+        source = <<-SOURCE
+        #{type} nope {
+            notify { succ: message => 'Nope' }
+            notify { message => 'Nope' }
+            notify { pred: message => 'Nope' }
+          }
+        SOURCE
+        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::RESOURCE_WITHOUT_TITLE)
+      end
+
+      it "detects a resource declared without title in #{type} when it is declarated first" do
+        source = <<-SOURCE
+          #{type} nope {
+            notify { message => 'Nope' }
+            notify { pred: message => 'Nope' }
+          }
+        SOURCE
+        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::RESOURCE_WITHOUT_TITLE)
+      end
+
+      it "detects a resource declared without title in #{type} when it is declarated last" do
+        source = <<-SOURCE
+          #{type} nope {
+            notify { succ: message => 'Nope' }
+            notify { message => 'Nope' }
+          }
+        SOURCE
+        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::RESOURCE_WITHOUT_TITLE)
+      end
     end
   end
 
@@ -177,6 +217,46 @@ describe "validating 4x" do
     end
   end
 
+  context 'for parameter names' do
+    ['class', 'define'].each do |word|
+      it "should require that #{word} parameter names are unique" do
+        expect(validate(parse("#{word} foo($a = 10, $a = 20) {}"))).to have_issue(Puppet::Pops::Issues::DUPLICATE_PARAMETER)
+      end
+    end
+
+    it "should require that template parameter names are unique" do
+      expect(validate(parse_epp("<%-| $a, $a |-%><%= $a == doh %>"))).to have_issue(Puppet::Pops::Issues::DUPLICATE_PARAMETER)
+    end
+  end
+
+  context 'for parameter defaults' do
+    ['class', 'define'].each do |word|
+      it "should not permit assignments in #{word} parameter default expressions" do
+        expect { parse("#{word} foo($a = $x = 10) {}") }.to raise_error(Puppet::ParseErrorWithIssue, /Syntax error at '='/)
+      end
+    end
+
+    ['class', 'define'].each do |word|
+      it "should not permit assignments in #{word} parameter default nested expressions" do
+        expect(validate(parse("#{word} foo($a = [$x = 10]) {}"))).to have_issue(Puppet::Pops::Issues::ILLEGAL_ASSIGNMENT_CONTEXT)
+      end
+
+      it "should not permit assignments to subsequently declared parameters in #{word} parameter default nested expressions" do
+        expect(validate(parse("#{word} foo($a = ($b = 3), $b = 5) {}"))).to have_issue(Puppet::Pops::Issues::ILLEGAL_ASSIGNMENT_CONTEXT)
+      end
+
+      it "should not permit assignments to previously declared parameters in #{word} parameter default nested expressions" do
+        expect(validate(parse("#{word} foo($a = 10, $b = ($a = 10)) {}"))).to have_issue(Puppet::Pops::Issues::ILLEGAL_ASSIGNMENT_CONTEXT)
+      end
+
+      it "should permit assignments in #{word} parameter default inside nested lambda expressions" do
+        expect(validate(parse(
+          "#{word} foo($a = [1,2,3], $b = 0, $c = $a.map |$x| { $b = $x; $b * $a.reduce |$x, $y| {$x + $y}}) {}"))).not_to(
+          have_issue(Puppet::Pops::Issues::ILLEGAL_ASSIGNMENT_CONTEXT))
+      end
+    end
+  end
+
   context 'for reserved parameter names' do
     ['name', 'title'].each do |word|
       it "produces an error when $#{word} is used as a parameter in a class" do
@@ -240,6 +320,41 @@ describe "validating 4x" do
         source = "unless false { #{word} x {} }"
         expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::NOT_TOP_LEVEL)
       end
+    end
+
+    ['class', 'define', 'node'].each do |word|
+      it "produces an error when $#{word} is nested in an function" do
+        source = "function y() { #{word} x {} }"
+        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::NOT_TOP_LEVEL)
+      end
+    end
+
+    it 'produces an error when a function is nested in an function' do
+      source = 'function y() { function x() {} }'
+      expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
+    end
+
+    ['class', 'define', 'node'].each do |word|
+      it "produces an error when function is nested in a #{word}" do
+        source = "#{word} x { function y() {} }"
+        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
+      end
+    end
+
+    it 'does not produce an error when function is alone at top level script' do
+      source = 'function y() {}'
+      expect(validate(parse(source))).not_to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
+    end
+
+    it 'does not produce an error when function is in a top level block' do
+      source = "function x() {}\nfunction y() {}"
+      expect(validate(parse(source))).not_to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
+      source = "$a = 10\nfunction y() {}"
+      expect(validate(parse(source))).not_to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
+      source = "function y() {}\n$a = 10"
+      expect(validate(parse(source))).not_to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
+      source = "$a = 10\nfunction y() {}\n$b = 20"
+      expect(validate(parse(source))).not_to have_issue(Puppet::Pops::Issues::NOT_ABSOLUTE_TOP_LEVEL)
     end
   end
 

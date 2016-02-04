@@ -861,7 +861,8 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
         # NOTE: these meta-esque parameters are not recognized as such
         "notify { id: message=>explicit} Notify[id][title]"   => /does not have a parameter called 'title'/,
         "notify { id: message=>explicit} Notify[id]['type']"   => /does not have a parameter called 'type'/,
-        "notify { id: message=>explicit } Notify[id]{message=>override}" => /'message' is already set on Notify\[id\]/
+        "notify { id: message=>explicit } Notify[id]{message=>override}" => /'message' is already set on Notify\[id\]/,
+        "notify { id: message => 'once', message => 'twice' }" => /'message' has already been set/
       }.each do |source, result|
         it "should parse '#{source}' and raise error matching #{result}" do
           expect { parser.evaluate_string(scope, source, __FILE__)}.to raise_error(result)
@@ -960,7 +961,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       end
 
     it "provides location information on error in unparenthesized call logic" do
-    expect{parser.evaluate_string(scope, "include non_existing_class", __FILE__)}.to raise_error(Puppet::ParseError, /line 1\:1/)
+    expect{parser.evaluate_string(scope, "include non_existing_class", __FILE__)}.to raise_error(Puppet::ParseError, /:1:1/)
     end
 
     it 'defaults can be given in a lambda and used only when arg is missing' do

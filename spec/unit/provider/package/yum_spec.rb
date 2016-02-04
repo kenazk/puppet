@@ -448,7 +448,7 @@ describe provider_class do
 
     it "returns an empty hash if 'yum check-update' returned an exit code that was not 0 or 100" do
       Puppet::Util::Execution.expects(:execute).returns(stub(:exitstatus => 1))
-      described_class.expects(:warn)
+      described_class.expects(:warning).with('Could not check for updates, \'/usr/bin/yum check-update\' exited with 1')
       expect(described_class.check_updates([], [], [])).to eq({})
     end
   end
@@ -502,6 +502,17 @@ describe provider_class do
         expect(output).not_to include("Security")
       end
       it "includes updates before 'Security'" do
+        expect(output).to include("yum-plugin-fastestmirror.noarch")
+      end
+    end
+    describe "with broken update notices" do
+      let(:check_update) { File.read(my_fixture('yum-check-update-broken-notices.txt')) }
+      let(:output) { described_class.parse_updates(check_update) }
+
+      it "ignores all entries including and after 'Update'" do
+        expect(output).not_to include("Update")
+      end
+      it "includes updates before 'Update'" do
         expect(output).to include("yum-plugin-fastestmirror.noarch")
       end
     end

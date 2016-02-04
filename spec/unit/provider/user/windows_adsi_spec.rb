@@ -64,9 +64,9 @@ describe Puppet::Type.type(:user).provider(:windows_adsi), :if => Puppet.feature
 
   describe "#groups_insync?" do
 
-    let(:group1) { stub(:account => 'group1', :domain => '.', :to_s => 'group1sid') }
-    let(:group2) { stub(:account => 'group2', :domain => '.', :to_s => 'group2sid') }
-    let(:group3) { stub(:account => 'group3', :domain => '.', :to_s => 'group3sid') }
+    let(:group1) { stub(:account => 'group1', :domain => '.', :sid => 'group1sid') }
+    let(:group2) { stub(:account => 'group2', :domain => '.', :sid => 'group2sid') }
+    let(:group3) { stub(:account => 'group3', :domain => '.', :sid => 'group3sid') }
 
     before :each do
       Puppet::Util::Windows::SID.stubs(:name_to_sid_object).with('group1').returns(group1)
@@ -244,8 +244,8 @@ describe Puppet::Type.type(:user).provider(:windows_adsi), :if => Puppet.feature
   end
 
   it 'should be able to test whether a user exists' do
-    Puppet::Util::Windows::ADSI.stubs(:sid_uri_safe).returns(nil)
-    Puppet::Util::Windows::ADSI.stubs(:connect).returns stub('connection')
+    Puppet::Util::Windows::SID.stubs(:name_to_sid_object).returns(nil)
+    Puppet::Util::Windows::ADSI.stubs(:connect).returns stub('connection', :Class => 'User')
     expect(provider).to be_exists
 
     Puppet::Util::Windows::ADSI.stubs(:connect).returns nil

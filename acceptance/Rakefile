@@ -1,6 +1,9 @@
 require 'rake/clean'
 require 'pp'
 require 'yaml'
+require 'securerandom'
+require 'fileutils'
+require 'beaker-hostgenerator'
 require 'beaker/dsl/install_utils'
 extend Beaker::DSL::InstallUtils
 $LOAD_PATH << File.expand_path(File.join(File.dirname(__FILE__), 'lib'))
@@ -76,7 +79,7 @@ module HarnessOptions
   end
 end
 
-def beaker_test(mode = :packages, options = {})
+def beaker_test(mode = :aio, options = {})
   delete_options = options.delete(:__delete_options__) || []
   final_options = HarnessOptions.options(mode, options)
   preserve_config = final_options.delete(:__preserve_config__)
@@ -113,7 +116,20 @@ EOS
   tests = ENV['TESTS'] || ENV['TEST']
   tests_opt = "--tests=#{tests}" if tests
 
-  config_opt = "--hosts=#{config}" if config
+  agent_target = ENV['TEST_TARGET']
+  if config and File.exists?(config)
+    config_opt = "--hosts=#{config}"
+  elsif agent_target
+    master_target = ENV['MASTER_TEST_TARGET'] || 'redhat7-64m'
+    targets = "#{master_target}-#{agent_target}"
+    cli = BeakerHostGenerator::CLI.new([targets, '--disable-default-role', '--osinfo-version', '1'])
+    ENV['BEAKER_HOSTS'] = "tmp/#{targets}-#{SecureRandom.uuid}.yaml"
+    FileUtils.mkdir_p('tmp')
+    File.open(config, 'w') do |fh|
+      fh.print(cli.execute)
+    end
+    config_opt = "--hosts=#{config}"
+  end
 
   overriding_options = ENV['OPTIONS']
 
@@ -238,7 +254,7 @@ def print_preserved(preserved)
 end
 
 def beaker_run_type
-  type = ENV['TYPE'] || :packages
+  type = ENV['TYPE'] || :aio
   type = type.to_sym
 end
 
@@ -247,7 +263,7 @@ def sha
 end
 
 def config
-  ENV['CONFIG']
+  ENV['BEAKER_HOSTS']
 end
 
 namespace :ci do
@@ -258,7 +274,9 @@ namespace :ci do
   namespace :test do
     USAGE = <<-EOS
 Requires commit SHA to be put under test as environment variable: SHA='<sha>'.
-Also must set CONFIG=config/nodes/foo.yaml or include it in an options.rb for Beaker.
+Also must set BEAKER_HOSTS=config/nodes/foo.yaml or include it in an options.rb for Beaker,
+or specify TEST_TARGET in a form beaker-hostgenerator accepts, e.g. ubuntu1504-64a.
+You may override the default master test target by specifying MASTER_TEST_TARGET.
 You may set TESTS=path/to/test,and/more/tests.
 You may set additional Beaker OPTIONS='--more --options'
 If testing from git checkouts, you may optionally set the github fork to checkout from using PUPPET_FORK='some-other-puppet-fork' (you may change the HIERA_FORK and FACTER_FORK as well if you wish).
@@ -266,14 +284,6 @@ You may also optionally set the git server to checkout repos from using GIT_SERV
 Or you may set PUPPET_GIT_SERVER='my.host.with.git.daemon', specifically, if you have set up a `git daemon` to pull local commits from.  (You will need to allow the git daemon to serve the repo (see `git help daemon` and the docs/acceptance_tests.md for more details)).
 If there is a Beaker options hash in a ./local_options.rb, it will be included.  Commandline options set through the above environment variables will override settings in this file.
 EOS
-
-    desc <<-EOS
-Run the acceptance tests through Beaker and install packages on the configuration targets.
-#{USAGE}
-EOS
-    task :packages => 'ci:check_env' do
-      beaker_test
-    end
 
     desc <<-EOS
 Run the acceptance tests through Beaker and install packages as part of the AIO puppet-agent installation.
@@ -284,21 +294,13 @@ EOS
     end
 
     desc <<-EOS
-Run the acceptance tests through Beaker and install packages as part of the AIO puppet-agent installation, testing against puppet-master-passenger.
-#{USAGE}
-EOS
-    task :passenger => 'ci:check_env' do
-      beaker_test(:passenger)
-    end
-
-    desc <<-EOS
 Install puppet as a gem on a predefined set of hosts using Beaker, and run a basic smoke test.
 
   $ env SHA=<full sha> bundle exec rake:ci:gem
 EOS
     task :gem => 'ci:check_env' do
       ENV['TESTS'] = 'setup/gem/pre-suite/010_GemInstall.rb'
-      ENV['CONFIG'] = 'config/nodes/gem.yaml'
+      ENV['BEAKER_HOSTS'] = 'config/nodes/gem.yaml'
       beaker_test(:gem)
     end
 
@@ -318,7 +320,7 @@ EOS
 
   desc <<-EOS
 Run an acceptance test for a given node configuration and preserve the hosts.
-Defaults to a packages run, but you can set it to 'git' with TYPE='git'.
+Defaults to an aio run, but you can set it to 'git' with TYPE='git'.
 #{USAGE}
   EOS
   task :test_and_preserve_hosts => 'ci:check_env'  do
@@ -349,7 +351,7 @@ You can go back through the last SECS_AGO logs.  Default is one day ago in secs.
   desc <<-EOS
 Rerun an acceptance test using the last captured preserved_config.yaml to skip provisioning.
 Or specify a CONFIG_NUMBER from `rake ci:list_preserved`.
-Defaults to a packages run, but you can set it to 'git' with TYPE='git'.
+Defaults to an aio run, but you can set it to 'git' with TYPE='git'.
   EOS
   task :test_against_preserved_hosts do
     config_number = (ENV['CONFIG_NUMBER'] || 0).to_i
@@ -364,15 +366,8 @@ Defaults to a packages run, but you can set it to 'git' with TYPE='git'.
       :no_provision => true,
       :preserve_hosts => 'always',
     }
-    run_type = beaker_run_type
-    if run_type == :packages
-      options.merge!(:pre_suite => [
-        'setup/packages/pre-suite/015_PackageHostsPresets.rb',
-        'setup/packages/pre-suite/045_EnsureMasterStartedOnPassenger.rb',
-      ])
-    else
-      options.merge!(:__delete_options__ => [:pre_suite])
-    end
+    options.merge!(:__delete_options__ => [:pre_suite])
+
     beaker_test(beaker_run_type, options)
   end
 end

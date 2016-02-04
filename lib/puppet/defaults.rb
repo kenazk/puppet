@@ -147,6 +147,11 @@ module Puppet
         :type     => :boolean,
         :desc     => "Whether to enable experimental performance profiling",
     },
+    :static_catalogs => {
+      :default    => false,
+      :type       => :boolean,
+      :desc       => "Whether to compile a static catalog."
+    },
     :autoflush => {
       :default => true,
       :type       => :boolean,
@@ -781,6 +786,20 @@ EOT
         :values => ["md5", "sha256"],
         :desc     => 'Which digest algorithm to use for file resources and the filebucket.
                       Valid values are md5, sha256. Default is md5.',
+    },
+    :supported_checksum_types => {
+      :default => ['md5', 'sha256'],
+      :type    => :array,
+      :desc    => 'Checksum types supported by this agent for use in file resources of a static
+        catalog. Valid types are md5, md5lite, sha256, sha256lite, sha1, sha1lite, mtime, ctime.',
+      :hook    => proc do |value|
+        values = munge(value)
+        valid   = ['md5', 'md5lite', 'sha256', 'sha256lite', 'sha1', 'sha1lite', 'mtime', 'ctime']
+        invalid = values.reject {|alg| valid.include?(alg)}
+        if not invalid.empty?
+          raise ArgumentError, "Unrecognized checksum types #{invalid} are not supported. Valid values are #{valid}."
+        end
+      end
     }
   )
 
@@ -1565,7 +1584,11 @@ EOT
     :pluginsync => {
       :default    => true,
       :type       => :boolean,
-      :desc       => "Whether plugins should be synced with the central server.",
+      :desc       => "Whether plugins should be synced with the central server. This setting is
+        deprecated.",
+      :hook => proc { |value|
+        Puppet.deprecation_warning "Setting 'pluginsync' is deprecated."
+      }
     },
 
     :pluginsignore => {
@@ -1599,6 +1622,12 @@ EOT
       :default    => "",
       :desc       => "Tags to use to find resources.  If this is set, then
         only resources tagged with the specified tags will be applied.
+        Values must be comma-separated.",
+    },
+    :skip_tags => {
+      :default    => "",
+      :desc       => "Tags to use to filter resources.  If this is set, then
+        only resources not tagged with the specified tags will be applied.
         Values must be comma-separated.",
     },
     :evaltrace => {

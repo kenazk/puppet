@@ -213,11 +213,24 @@ class Puppet::Pops::Validation::Checker4_0
     rvalue(o.right_expr)
   end
 
+  def resource_without_title?(o)
+    if o.instance_of?(Puppet::Pops::Model::BlockExpression)
+      statements = o.statements
+      statements.length == 2 && statements[0].instance_of?(Puppet::Pops::Model::QualifiedName) && statements[1].instance_of?(Puppet::Pops::Model::LiteralHash)
+    else
+      false
+    end
+  end
+
   def check_BlockExpression(o)
-    o.statements[0..-2].each do |statement|
-      if idem(statement)
-        acceptor.accept(Issues::IDEM_EXPRESSION_NOT_LAST, statement)
-        break # only flag the first
+    if resource_without_title?(o)
+      acceptor.accept(Issues::RESOURCE_WITHOUT_TITLE, o, :name => o.statements[0].value)
+    else
+      o.statements[0..-2].each do |statement|
+        if idem(statement)
+          acceptor.accept(Issues::IDEM_EXPRESSION_NOT_LAST, statement)
+          break # only flag the first
+        end
       end
     end
   end
@@ -264,6 +277,7 @@ class Puppet::Pops::Validation::Checker4_0
   def check_EppExpression(o)
     if o.eContainer.is_a?(Puppet::Pops::Model::LambdaExpression)
       internal_check_no_capture(o.eContainer, o)
+      internal_check_parameter_name_uniqueness(o.eContainer)
     end
   end
 
@@ -345,16 +359,14 @@ class Puppet::Pops::Validation::Checker4_0
   end
 
   def check_FunctionDefinition(o)
-    # TODO PUP-2080: more strict rule for top - can only be contained in Program (for now)
-    #  sticking functions in classes would create functions in the class name space
-    #  but not be special in any other way
-    #
     check_NamedDefinition(o)
+    internal_check_parameter_name_uniqueness(o)
   end
 
   def check_HostClassDefinition(o)
     check_NamedDefinition(o)
     internal_check_no_capture(o)
+    internal_check_parameter_name_uniqueness(o)
     internal_check_reserved_params(o)
     internal_check_no_idem_last(o)
   end
@@ -362,13 +374,14 @@ class Puppet::Pops::Validation::Checker4_0
   def check_ResourceTypeDefinition(o)
     check_NamedDefinition(o)
     internal_check_no_capture(o)
+    internal_check_parameter_name_uniqueness(o)
     internal_check_reserved_params(o)
     internal_check_no_idem_last(o)
   end
 
   def internal_check_no_idem_last(o)
     if violator = ends_with_idem(o.body)
-      acceptor.accept(Issues::IDEM_NOT_ALLOWED_LAST, violator, {:container => o})
+      acceptor.accept(Issues::IDEM_NOT_ALLOWED_LAST, violator, {:container => o}) unless resource_without_title?(violator)
     end
   end
 
@@ -402,6 +415,13 @@ class Puppet::Pops::Validation::Checker4_0
     end
   end
 
+  def internal_check_parameter_name_uniqueness(o)
+    unique = Set.new
+    o.parameters.each do |p|
+      acceptor.accept(Issues::DUPLICATE_PARAMETER, p, {:param_name => p.name}) unless unique.add?(p.name)
+    end
+  end
+
   def check_IfExpression(o)
     rvalue(o.test)
   end
@@ -426,7 +446,7 @@ class Puppet::Pops::Validation::Checker4_0
     hostname(o.host_matches, o)
     top(o.eContainer, o)
     if violator = ends_with_idem(o.body)
-      acceptor.accept(Issues::IDEM_NOT_ALLOWED_LAST, violator, {:container => o})
+      acceptor.accept(Issues::IDEM_NOT_ALLOWED_LAST, violator, {:container => o}) unless resource_without_title?(violator)
     end
     unless o.parent.nil?
       acceptor.accept(Issues::ILLEGAL_NODE_INHERITANCE, o.parent)
@@ -472,12 +492,16 @@ class Puppet::Pops::Validation::Checker4_0
     end
     return unless o.value
 
-    if o.value.is_a?(Puppet::Pops::Model::AssignmentExpression)
-      [o.value]
+    internal_check_illegal_assignment(o.value)
+  end
+
+  def internal_check_illegal_assignment(o)
+    if o.is_a?(Puppet::Pops::Model::AssignmentExpression)
+      acceptor.accept(Issues::ILLEGAL_ASSIGNMENT_CONTEXT, o)
     else
-      o.value.eAllContents.select {|model| model.is_a? Puppet::Pops::Model::AssignmentExpression }
-    end.each do |assignment|
-      acceptor.accept(Issues::ILLEGAL_ASSIGNMENT_CONTEXT, assignment)
+      # recursively check all contents unless it's a lambda expression. A lambda may contain
+      # local assignments
+      o.eContents.each {|model| internal_check_illegal_assignment(model) } unless o.is_a?(Puppet::Pops::Model::LambdaExpression)
     end
   end
 
@@ -693,8 +717,13 @@ class Puppet::Pops::Validation::Checker4_0
   end
 
   def top_BlockExpression(o, definition)
-    # ok, if this is a block representing the body of a class, or is top level
-    top o.eContainer, definition
+    if definition.is_a?(Model::FunctionDefinition) && !o.eContainer.is_a?(Model::Program)
+      # not ok if the definition is a FunctionDefinition. It can never be nested in a block
+      acceptor.accept(Issues::NOT_ABSOLUTE_TOP_LEVEL, definition)
+    else
+      # ok, if this is a block representing the body of a class, or is top level
+      top o.eContainer, definition
+    end
   end
 
   def top_HostClassDefinition(o, definition)

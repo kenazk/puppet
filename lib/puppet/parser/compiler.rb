@@ -20,7 +20,6 @@ class Puppet::Parser::Compiler
   include Puppet::Pops::Evaluator::Runtime3Support
 
   def self.compile(node, code_id = nil)
-    $env_module_directories = nil
     node.environment.check_for_reparse
 
     errors = node.environment.validation_errors
@@ -803,14 +802,7 @@ class Puppet::Parser::Compiler
     if trusted_param
       # Blows up if it is a parameter as it will be set as $trusted by the compiler as if it was a variable
       node.parameters.delete('trusted')
-      if trusted_param.is_a?(Hash) && %w{authenticated certname extensions}.all? {|key| trusted_param.has_key?(key) }
-        # looks like a hash of trusted data - resurrect it
-        # Allow root to trust the authenticated information if option --trusted is given
-        if !Puppet.features.root?
-          # Set as not trusted - but keep the information
-          trusted_param['authenticated'] = false
-        end
-      else
+      unless trusted_param.is_a?(Hash) && %w{authenticated certname extensions}.all? {|key| trusted_param.has_key?(key) }
         # trusted is some kind of garbage, do not resurrect
         trusted_param = nil
       end

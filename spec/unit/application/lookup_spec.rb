@@ -14,6 +14,16 @@ describe Puppet::Application::Lookup do
       expect { lookup.run_command }.to raise_error(RuntimeError, expected_error)
     end
 
+    it "does not allow invalid arguments for '--merge'" do
+      lookup.options[:node] = 'dantooine.local'
+      lookup.options[:merge] = 'something_bad'
+      lookup.command_line.stubs(:args).returns(['atton', 'kreia'])
+
+      expected_error = "The --merge option only accepts 'first', 'hash', 'unique', or 'deep'\nRun 'puppet lookup --help' for more details"
+
+      expect { lookup.run_command }.to raise_error(RuntimeError, expected_error)
+    end
+
     it "does not allow deep merge options if '--merge' was not set to deep" do
       lookup.options[:node] = 'dantooine.local'
       lookup.options[:merge_hash_arrays] = true
@@ -44,6 +54,18 @@ describe Puppet::Application::Lookup do
       expect { lookup.run_command }.to output("rand\n").to_stdout
     end
 
+    %w(first unique hash deep).each do |opt|
+
+      it "accepts --merge #{opt}" do
+        lookup.options[:node] = 'dantooine.local'
+        lookup.options[:merge] = opt
+        lookup.command_line.stubs(:args).returns(['atton', 'kreia'])
+        lookup.stubs(:generate_scope).yields('scope')
+        Puppet::Pops::Lookup.stubs(:lookup).returns('rand')
+        expect { lookup.run_command }.to output("--- rand\n...\n").to_stdout
+      end
+    end
+
     it "prints the value found by lookup" do
       lookup.options[:node] = 'dantooine.local'
       lookup.command_line.stubs(:args).returns(['atton', 'kreia'])
@@ -56,7 +78,7 @@ describe Puppet::Application::Lookup do
   end
 
 
-  context 'when asked to explain' do
+  context 'when given a valid configuration' do
     let (:lookup) { Puppet::Application[:lookup] }
 
     # There is a fully configured 'sample' environment in fixtures at this location
@@ -64,7 +86,7 @@ describe Puppet::Application::Lookup do
 
     let(:facts) { Puppet::Node::Facts.new("facts", {}) }
 
-    let(:node) { Puppet::Node.new("testnode", :facts => facts, :environment => environment) }
+    let(:node) { Puppet::Node.new("testnode", :facts => facts, :environment => 'production') }
 
     let(:expected_json_hash) { {
       'type' => 'merge',
@@ -104,30 +126,30 @@ describe Puppet::Application::Lookup do
       :event => :result,
       :value => 'This is A',
       :branches => [
-      { :key => 'a',
-        :event => :not_found,
-        :type => :global,
-        :name => :hiera
-      },
-      {
-        :type => :data_provider,
-        :name => 'Hiera Data Provider, version 4',
-        :configuration_path => "#{environmentpath}/production/hiera.yaml",
-        :branches => [
+        { :key => 'a',
+          :event => :not_found,
+          :type => :global,
+          :name => :hiera
+        },
         {
           :type => :data_provider,
-          :name => 'common',
+          :name => 'Hiera Data Provider, version 4',
+          :configuration_path => "#{environmentpath}/production/hiera.yaml",
           :branches => [
-          {
-            :key => 'a',
-            :value => 'This is A',
-            :event => :found,
-            :type => :path,
-            :original_path => 'common',
-            :path => "#{environmentpath}/production/data/common.yaml",
-          }]
-       }]
-      }]
+            {
+              :type => :data_provider,
+              :name => 'common',
+              :branches => [
+                {
+                  :key => 'a',
+                  :value => 'This is A',
+                  :event => :found,
+                  :type => :path,
+                  :original_path => 'common',
+                  :path => "#{environmentpath}/production/data/common.yaml",
+                }]
+            }]
+        }]
     } }
 
     around(:each) do |example|
@@ -140,8 +162,8 @@ describe Puppet::Application::Lookup do
       end
     end
 
-    it 'produces human readable text by default' do
-      lookup.options[:node] = Puppet::Node.new("testnode", :facts => facts, :environment => 'production')
+    it '--explain produces human readable text by default' do
+      lookup.options[:node] = node
       lookup.options[:explain] = true
       lookup.command_line.stubs(:args).returns(['a'])
       expect { lookup.run_command }.to output(<<-EXPLANATION).to_stdout
@@ -152,14 +174,70 @@ Merge strategy first
     ConfigurationPath "#{environmentpath}/production/hiera.yaml"
     Data Provider "common"
       Path "#{environmentpath}/production/data/common.yaml"
-        Original path: common
+        Original path: "common"
         Found key: "a" value: "This is A"
   Merged result: "This is A"
       EXPLANATION
     end
 
+    it '--explain produces human readable text of a hash merge when using --explain-options' do
+      lookup.options[:node] = node
+      lookup.options[:explain_options] = true
+      expect { lookup.run_command }.to output(<<-EXPLANATION).to_stdout
+Merge strategy hash
+  Data Binding "hiera"
+    No such key: "lookup_options"
+  Data Provider "Hiera Data Provider, version 4"
+    ConfigurationPath "#{environmentpath}/production/hiera.yaml"
+    Data Provider "common"
+      Path "#{environmentpath}/production/data/common.yaml"
+        Original path: "common"
+        Found key: "lookup_options" value: {
+          "a" => "first"
+        }
+  Merged result: {
+    "a" => "first"
+  }
+      EXPLANATION
+    end
+
+    it '--explain produces human readable text of a hash merge when using both --explain and --explain-options' do
+      lookup.options[:node] = node
+      lookup.options[:explain] = true
+      lookup.options[:explain_options] = true
+      lookup.command_line.stubs(:args).returns(['a'])
+      expect { lookup.run_command }.to output(<<-EXPLANATION).to_stdout
+Searching for "lookup_options"
+  Merge strategy hash
+    Data Binding "hiera"
+      No such key: "lookup_options"
+    Data Provider "Hiera Data Provider, version 4"
+      ConfigurationPath "#{environmentpath}/production/hiera.yaml"
+      Data Provider "common"
+        Path "#{environmentpath}/production/data/common.yaml"
+          Original path: "common"
+          Found key: "lookup_options" value: {
+            "a" => "first"
+          }
+    Merged result: {
+      "a" => "first"
+    }
+Searching for "a"
+  Merge strategy first
+    Data Binding "hiera"
+      No such key: "a"
+    Data Provider "Hiera Data Provider, version 4"
+      ConfigurationPath "#{environmentpath}/production/hiera.yaml"
+      Data Provider "common"
+        Path "#{environmentpath}/production/data/common.yaml"
+          Original path: "common"
+          Found key: "a" value: "This is A"
+    Merged result: "This is A"
+      EXPLANATION
+    end
+
     it 'can produce a yaml explanation' do
-      lookup.options[:node] = Puppet::Node.new("testnode", :facts => facts, :environment => 'production')
+      lookup.options[:node] = node
       lookup.options[:explain] = true
       lookup.options[:render_as] = :yaml
       lookup.command_line.stubs(:args).returns(['a'])
@@ -176,7 +254,7 @@ Merge strategy first
     end
 
     it 'can produce a json explanation' do
-      lookup.options[:node] = Puppet::Node.new("testnode", :facts => facts, :environment => 'production')
+      lookup.options[:node] = node
       lookup.options[:explain] = true
       lookup.options[:render_as] = :json
       lookup.command_line.stubs(:args).returns(['a'])
@@ -190,6 +268,38 @@ Merge strategy first
         $stdout = save_stdout
       end
       expect(JSON.parse(output)).to eq(expected_json_hash)
+    end
+
+    context 'the global scope' do
+      it "is unaffected by global variables unless '--compile' is used" do
+        lookup.options[:node] = node
+        lookup.command_line.stubs(:args).returns(['c'])
+        expect { lookup.run_command }.to output("--- This is\n...\n").to_stdout
+      end
+
+      it "is affected by global variables when '--compile' is used" do
+        lookup.options[:node] = node
+        lookup.options[:compile] = true
+        lookup.command_line.stubs(:args).returns(['c'])
+        expect { lookup.run_command }.to output("--- This is C from site.pp\n...\n").to_stdout
+      end
+    end
+
+    context 'using a puppet function as data provider' do
+      let(:node) { Puppet::Node.new("testnode", :facts => facts, :environment => 'puppet_func_provider') }
+
+      it "works OK in the absense of '--compile'" do
+        lookup.options[:node] = node
+        lookup.command_line.stubs(:args).returns(['c'])
+        expect { lookup.run_command }.to output("--- This is C from data.pp\n...\n").to_stdout
+      end
+
+      it "global scope is affected by global variables when '--compile' is used" do
+        lookup.options[:node] = node
+        lookup.options[:compile] = true
+        lookup.command_line.stubs(:args).returns(['c'])
+        expect { lookup.run_command }.to output("--- This is C from site.pp\n...\n").to_stdout
+      end
     end
   end
 end

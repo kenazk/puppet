@@ -80,7 +80,7 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
     elsif output.exitstatus == 0
       self.debug "#{command(:cmd)} check-update exited with 0; no package updates available."
     else
-      self.warn "Could not check for updates, '#{command(:cmd)} check-update' exited with #{output.exitstatus}"
+      self.warning "Could not check for updates, '#{command(:cmd)} check-update' exited with #{output.exitstatus}"
     end
     updates
   end
@@ -91,7 +91,7 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
 
     updates = Hash.new { |h, k| h[k] = [] }
     body.split.each_slice(3) do |tuple|
-      break if tuple[0] =~ /^(Obsoleting|Security:)/
+      break if tuple[0] =~ /^(Obsoleting|Security:|Update)/
       hash = update_to_hash(*tuple[0..1])
       # Create entries for both the package name without a version and a
       # version since yum considers those as mostly interchangeable.

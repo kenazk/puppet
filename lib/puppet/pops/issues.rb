@@ -73,19 +73,30 @@ module Puppet::Pops::Issues
       instance_eval &block
     end
 
-    # Returns the label provider given as a key in the hash passed to #format.
-    # If given an argument, calls #label on the label provider (caller would otherwise have to
-    # call label.label(it)
+    # Obtains the label provider given as a key `:label` in the hash passed to #format. The label provider is
+    # return if no arguments are given. If given an argument, returns the result of calling #label on the label
+    # provider.
     #
-    def label(it = nil)
-      raise "Label provider key :label must be set to produce the text of the message!" unless @data[:label]
-      it.nil? ? @data[:label] : @data[:label].label(it)
+    # @param args [Object] one object to obtain a label for or zero arguments to obtain the label provider
+    # @return [Puppet::Pops::LabelProvider,String] the label provider or label depending on if an argument is given or not
+    # @raise [Puppet::Error] if no label provider is found
+    def label(*args)
+      args.empty? ? label_provider : label_provider.label(args[0])
+    end
+
+    # Returns the label provider given as key `:label` in the hash passed to #format.
+    # @return [Puppet::Pops::LabelProvider] the label provider
+    # @raise [Puppet::Error] if no label provider is found
+    def label_provider
+      label_provider = @data[:label]
+      raise Puppet::Error, 'Label provider key :label must be set to produce the text of the message!' unless label_provider
+      label_provider
     end
 
     # Returns the label provider given as a key in the hash passed to #format.
     #
     def semantic
-      raise "Label provider key :semantic must be set to produce the text of the message!" unless @data[:semantic]
+      raise Puppet::Error, 'Label provider key :semantic must be set to produce the text of the message!' unless @data[:semantic]
       @data[:semantic]
     end
   end
@@ -149,6 +160,10 @@ module Puppet::Pops::Issues
   #
   NOT_TOP_LEVEL = hard_issue :NOT_TOP_LEVEL do
     "Classes, definitions, and nodes may only appear at toplevel or inside other classes"
+  end
+
+  NOT_ABSOLUTE_TOP_LEVEL = hard_issue :NOT_ABSOLUTE_TOP_LEVEL do
+    "#{label.a_an_uc(semantic)} may only appear at toplevel"
   end
 
   CROSS_SCOPE_ASSIGNMENT = hard_issue :CROSS_SCOPE_ASSIGNMENT, :name do
@@ -484,7 +499,7 @@ module Puppet::Pops::Issues
   end
 
   DUPLICATE_ATTRIBUTE = issue :DUPLICATE_ATTRIBUE, :attribute  do
-    "The attribute '#{attribute}' has already been set in this resource body"
+    "The attribute '#{attribute}' has already been set"
   end
 
   MISSING_TITLE = hard_issue :MISSING_TITLE do
@@ -536,6 +551,10 @@ module Puppet::Pops::Issues
     "This #{label.label(semantic)} has no effect. A value was produced and then forgotten (one or more preceding expressions may have the wrong form)"
   end
 
+  RESOURCE_WITHOUT_TITLE = issue :RESOURCE_WITHOUT_TITLE, :name do
+    "This expression is invalid. Did you try declaring a '#{name}' resource without a title?"
+  end
+
   IDEM_NOT_ALLOWED_LAST = hard_issue :IDEM_NOT_ALLOWED_LAST, :container do
     "This #{label.label(semantic)} has no effect. #{label.a_an_uc(container)} can not end with a value-producing expression without other effect"
   end
@@ -562,6 +581,10 @@ module Puppet::Pops::Issues
 
   ILLEGAL_OVERRIDEN_TYPE = issue :ILLEGAL_OVERRIDEN_TYPE, :actual do
     "Resource Override can only operate on resources, got: #{label.label(actual)}"
+  end
+
+  DUPLICATE_PARAMETER = hard_issue :DUPLICATE_PARAMETER, :param_name do
+    "The parameter '#{param_name}' is declared more than once in the parameter list"
   end
 
   RESERVED_PARAMETER = hard_issue :RESERVED_PARAMETER, :container, :param_name do
@@ -630,6 +653,10 @@ module Puppet::Pops::Issues
 
   UNCLOSED_QUOTE = hard_issue :UNCLOSED_QUOTE, :after, :followed_by do
     "Unclosed quote after #{after} followed by '#{followed_by}'"
+  end
+
+  UNCLOSED_MLCOMMENT = hard_issue :UNCLOSED_MLCOMMENT do
+    'Unclosed multiline comment'
   end
 
   EPP_INTERNAL_ERROR = hard_issue :EPP_INTERNAL_ERROR, :error do

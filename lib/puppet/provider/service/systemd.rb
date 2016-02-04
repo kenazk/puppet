@@ -5,14 +5,21 @@ Puppet::Type.type(:service).provide :systemd, :parent => :base do
 
   commands :systemctl => "systemctl"
 
-  confine :exists => "/run/systemd/system"
+  if Facter.value(:osfamily).downcase == 'debian'
+    # With multiple init systems on Debian, it is possible to have
+    # pieces of systemd around (e.g. systemctl) but not really be
+    # using systemd.  We do not do this on other platforms as it can
+    # cause issues when running in a chroot without /run mounted
+    # (PUP-5577)
+    confine :exists => "/run/systemd/system"
+  end
 
   defaultfor :osfamily => [:archlinux]
   defaultfor :osfamily => :redhat, :operatingsystemmajrelease => "7"
   defaultfor :osfamily => :redhat, :operatingsystem => :fedora
   defaultfor :osfamily => :suse
   defaultfor :operatingsystem => :debian, :operatingsystemmajrelease => "8"
-  defaultfor :operatingsystem => :ubuntu, :operatingsystemmajrelease => "15.04"
+  defaultfor :operatingsystem => :ubuntu, :operatingsystemmajrelease => ["15.04","15.10"]
 
   def self.instances
     i = []
